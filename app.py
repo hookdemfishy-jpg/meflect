@@ -4,6 +4,7 @@ from PIL import Image
 import io
 import json
 import base64
+import os
 
 st.set_page_config(page_title="MeFlect", page_icon="🪞", layout="centered")
 
@@ -38,16 +39,26 @@ st.markdown("""
     .hero-stat-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
     .ad-box { background: #F5F5F5; border: 1px dashed #ccc; border-radius: 12px;
               padding: 1rem; text-align: center; color: #999; font-size: 0.85rem; margin: 1rem 0; }
-    .plan-highlight { background: #7F77DD; color: white; border-radius: 12px; padding: 0.5rem 1rem;
-                      font-size: 0.85rem; font-weight: 600; display: inline-block; margin: 0.25rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Session state for analysis count ─────────────────────────────────────────
+# ── Session state ─────────────────────────────────────────────────────────────
 if "analyses_used" not in st.session_state:
     st.session_state.analyses_used = 0
 if "plan" not in st.session_state:
     st.session_state.plan = "free"
+if "result" not in st.session_state:
+    st.session_state.result = None
+if "ad_watched" not in st.session_state:
+    st.session_state.ad_watched = False
+if "bonus_analyses" not in st.session_state:
+    st.session_state.bonus_analyses = 0
+
+# ── Get API key from secrets or sidebar ───────────────────────────────────────
+try:
+    api_key = st.secrets["GROQ_API_KEY"]
+except:
+    api_key = None
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="meflect-logo">🪞 MeFlect</div>', unsafe_allow_html=True)
@@ -66,46 +77,62 @@ st.markdown("---")
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
-    api_key = st.text_input("Groq API Key", type="password", help="Get yours free at groq.com")
-    st.markdown("🔗 Get free key at groq.com")
-    st.markdown("---")
 
+    if not api_key:
+        api_key = st.text_input("Groq API Key", type="password", help="Get yours free at groq.com")
+        st.markdown("🔗 Get free key at groq.com")
+
+    st.markdown("---")
     st.markdown("### 💎 Your Plan")
-    analyses_left = max(0, 3 - st.session_state.analyses_used) if st.session_state.plan == "free" else "∞"
+
+    total_free = 3 + st.session_state.bonus_analyses
+    analyses_left = max(0, total_free - st.session_state.analyses_used)
+
     if st.session_state.plan == "free":
-        st.info(f"Free plan — {analyses_left} analyses left this month")
+        st.info(f"Free plan — **{analyses_left} analyses left**")
+
         st.markdown("**Watch an ad for 1 extra analysis:**")
-        if st.button("▶️ Watch Ad (Simulated)"):
-            st.session_state.analyses_used = max(0, st.session_state.analyses_used - 1)
-            st.success("Thanks! You got 1 extra analysis!")
+        if not st.session_state.ad_watched:
+            if st.button("▶️ Watch Ad"):
+                st.session_state.ad_watched = True
+                st.rerun()
+        else:
+            st.video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            if st.button("✅ I watched it — give me my analysis!"):
+                st.session_state.bonus_analyses += 1
+                st.session_state.ad_watched = False
+                st.success("✅ 1 extra analysis added!")
+                st.rerun()
+
         st.markdown("---")
         st.markdown("**Upgrade for unlimited:**")
-        if st.button("Monthly – $6.99/mo"):
-            st.session_state.plan = "monthly"
-            st.success("Upgraded! (Connect Stripe to charge real payments)")
-        if st.button("Annual – $3.99/mo ✨"):
-            st.session_state.plan = "annual"
-            st.success("Upgraded! (Connect Stripe to charge real payments)")
-        if st.button("One-time 10 pack – $1.99"):
-            st.session_state.analyses_used = max(0, st.session_state.analyses_used - 10)
-            st.success("10 analyses added!")
+        if st.button("Monthly – $6.99/mo", use_container_width=True):
+            st.info("Stripe coming soon!")
+        if st.button("Annual – $3.99/mo ✨", use_container_width=True):
+            st.info("Stripe coming soon!")
+        if st.button("10 Pack – $1.99", use_container_width=True):
+            st.info("Stripe coming soon!")
     else:
-        st.success(f"{'Monthly' if st.session_state.plan == 'monthly' else 'Annual'} plan — unlimited analyses ✨")
-        if st.button("Manage plan"):
-            st.info("Connect Stripe to manage billing")
+        st.success("Unlimited analyses ✨")
 
     st.markdown("---")
     st.caption("🔒 Your screenshots are never stored or sold.")
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 st.markdown("### 📱 Upload your screenshot")
-uploaded = st.file_uploader("Drop a screenshot of any conversation", type=["png", "jpg", "jpeg"])
+uploaded = st.file_uploader("Drop a screenshot of any conversation", type=["png", "jpg", "jpeg"], key="uploader")
 
 scenario_hint = st.selectbox("What kind of moment is this?",
     ["Argument / fight", "Breakup", "Being ghosted", "Apology gone wrong",
      "Feeling disrespected", "Confused about where things stand", "Other"])
 
-analyze_btn = st.button("✨ Analyze with MeFlect AI →", type="primary", use_container_width=True)
+col_analyze, col_reset = st.columns([3, 1])
+with col_analyze:
+    analyze_btn = st.button("✨ Analyze with MeFlect AI →", type="primary", use_container_width=True)
+with col_reset:
+    if st.button("🔄 Reset", use_container_width=True):
+        st.session_state.result = None
+        st.rerun()
 
 st.markdown("""
 <div class="stat-box">
@@ -204,28 +231,24 @@ def show_results(data):
     icon = "🟢" if data["verdict"] == "keep" else "🟡"
     st.markdown(f'<div class="{v_class}"><strong>{icon} {data["verdict_title"]}</strong><br><span style="font-size:0.9rem">{data["verdict_text"]}</span></div>', unsafe_allow_html=True)
 
-    # Ad box for free users
     if st.session_state.plan == "free":
         st.markdown("""
         <div class="ad-box">
-          📢 <strong>Ad</strong> — This space is where a real ad would appear.<br>
-          Watch ads in the sidebar to earn extra analyses!
+          📢 <strong>Ad space</strong> — Watch an ad in the sidebar to earn more analyses!
         </div>""", unsafe_allow_html=True)
 
-    # Paywall
     st.markdown("---")
     st.markdown('<div class="paywall-box">', unsafe_allow_html=True)
     st.markdown("### 🔒 Unlock your full report")
-    st.markdown('<div class="paywall-blur">Word-by-word breakdown of who escalated when. Full emotional timeline. Attachment style analysis. Custom 7-day communication improvement plan. Follow-up conversation script.</div>', unsafe_allow_html=True)
-    st.markdown("")
+    st.markdown('<div class="paywall-blur">Word-by-word breakdown. Full emotional timeline. Attachment style analysis. Custom 7-day plan. Follow-up script.</div>', unsafe_allow_html=True)
     col_a, col_b, col_c = st.columns(3)
     with col_a:
-        st.button("Monthly\n$6.99/mo", use_container_width=True)
+        st.button("Monthly $6.99/mo", use_container_width=True)
     with col_b:
-        st.button("Annual\n$3.99/mo ✨", use_container_width=True)
+        st.button("Annual $3.99/mo ✨", use_container_width=True)
     with col_c:
-        st.button("10 Pack\n$1.99", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.button("10 Pack $1.99", use_container_width=True)
+    st_markdown = st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Main logic ────────────────────────────────────────────────────────────────
 if analyze_btn:
@@ -233,8 +256,8 @@ if analyze_btn:
         st.error("Please enter your Groq API key in the sidebar. It is free at groq.com!")
     elif not uploaded:
         st.warning("Please upload a screenshot first.")
-    elif st.session_state.plan == "free" and st.session_state.analyses_used >= 3:
-        st.error("You have used all 3 free analyses! Watch an ad in the sidebar for 1 more, or upgrade to unlimited.")
+    elif st.session_state.plan == "free" and st.session_state.analyses_used >= total_free:
+        st.error("No analyses left! Watch an ad in the sidebar for 1 more, or upgrade.")
     else:
         image_bytes = uploaded.read()
         st.image(Image.open(io.BytesIO(image_bytes)), caption="Your screenshot", use_container_width=True)
@@ -242,8 +265,10 @@ if analyze_btn:
             try:
                 result = analyze_screenshot(image_bytes, scenario_hint, api_key)
                 st.session_state.analyses_used += 1
-                st.success("Analysis complete!")
-                show_results(result)
+                st.session_state.result = result
             except Exception as e:
                 st.error(f"Something went wrong: {e}")
                 st.caption("Make sure your Groq API key is correct and try again.")
+
+if st.session_state.result:
+    show_results(st.session_state.result)
